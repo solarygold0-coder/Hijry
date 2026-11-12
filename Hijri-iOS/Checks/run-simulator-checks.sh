@@ -3,11 +3,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 build_dir="${1:-$PWD/build/simulator}"
-if [[ "${HIJRI_SKIP_SIMULATOR_BUILD:-0}" != 1 ]]; then
-    xcodebuild -project Hijri.xcodeproj -scheme Hijri -configuration Release \
-        -destination 'generic/platform=iOS Simulator' -derivedDataPath "$build_dir" \
-        CODE_SIGNING_ALLOWED=NO build
-fi
+xcodebuild -project Hijri.xcodeproj -scheme Hijri -configuration Release \
+    -destination 'generic/platform=iOS Simulator' -derivedDataPath "$build_dir" \
+    CODE_SIGNING_ALLOWED=NO build
 
 app="$build_dir/Build/Products/Release-iphonesimulator/Hijri.app"
 bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist")"
@@ -24,7 +22,7 @@ cleanup() {
 trap cleanup EXIT
 
 sdk="$(xcrun --sdk iphonesimulator --show-sdk-version)"
-for model in 'iPhone 18 Pro Max' 'iPad Pro 13-inch (M5)'; do
+for model in "${HIJRI_IPHONE_SIMULATOR:-iPhone 18 Pro Max}" 'iPad Pro 13-inch (M5)'; do
     selection="$(xcrun simctl list -j | python3 Checks/simulator-destination.py "$model" "$sdk")"
     IFS=' ' read -r simulator runtime state device_type <<<"$selection"
     printf 'Checking %s using %s\n' "$model" "$runtime"
