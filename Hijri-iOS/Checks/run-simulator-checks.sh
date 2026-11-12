@@ -13,7 +13,6 @@ active_simulator=""
 cleanup() {
     if [[ -n "$active_simulator" ]]; then
         xcrun simctl shutdown "$active_simulator" >/dev/null 2>&1 || true
-        xcrun simctl delete "$active_simulator" >/dev/null 2>&1 || true
     fi
 }
 trap cleanup EXIT
@@ -21,11 +20,14 @@ trap cleanup EXIT
 sdk="$(xcrun --sdk iphonesimulator --show-sdk-version)"
 for model in 'iPhone 18 Pro Max' 'iPad Pro 13-inch (M5)'; do
     selection="$(xcrun simctl list -j | python3 Checks/simulator-destination.py "$model" "$sdk")"
-    IFS=' ' read -r device_type runtime <<<"$selection"
-    active_simulator="$(xcrun simctl create "Hijri check - $model" "$device_type" "$runtime")"
-    xcrun simctl bootstatus "$active_simulator" -b
-    xcrun simctl install "$active_simulator" "$app"
-    xcrun simctl launch "$active_simulator" "$bundle_id"
+    IFS=' ' read -r simulator runtime state <<<"$selection"
+    printf 'Checking %s using %s\n' "$model" "$runtime"
+    if [[ "$state" == Shutdown ]]; then
+        active_simulator="$simulator"
+    fi
+    xcrun simctl bootstatus "$simulator" -b
+    xcrun simctl install "$simulator" "$app"
+    xcrun simctl launch --terminate-running-process "$simulator" "$bundle_id"
     cleanup
     active_simulator=""
 done
