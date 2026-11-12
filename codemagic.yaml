@@ -1,0 +1,67 @@
+workflows:
+  hijri-ios-check:
+    name: Hijri iOS and iPadOS — simulator build
+    instance_type: mac_mini_m2
+    max_build_duration: 35
+    environment:
+      xcode: '27.1'
+    scripts:
+      - name: Prepare iOS source
+        script: |
+          set -euo pipefail
+          if [[ -f Hijri-5.16-iPhone-iPad-Xcode.zip ]]; then
+            unzip -oq Hijri-5.16-iPhone-iPad-Xcode.zip 'Hijri-iOS/*'
+          fi
+          test -s Hijri-iOS/Hijri.xcodeproj/project.pbxproj
+      - name: Check the calendar rules carried over from Android
+        script: bash Hijri-iOS/Checks/run-calendar-checks.sh
+      - name: Build and launch on iPhone and iPad simulators
+        script: bash Hijri-iOS/Checks/run-simulator-checks.sh
+  hijri-ios-ipa:
+    name: Hijri iOS and iPadOS — export App Store IPA
+    instance_type: mac_mini_m2
+    max_build_duration: 40
+    environment:
+      xcode: '27.1'
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.taqwim.ummalqura
+      vars:
+        HIJRI_BUNDLE_ID: com.taqwim.ummalqura
+    scripts:
+      - name: Prepare iOS source
+        script: |
+          set -euo pipefail
+          if [[ -f Hijri-5.16-iPhone-iPad-Xcode.zip ]]; then
+            unzip -oq Hijri-5.16-iPhone-iPad-Xcode.zip 'Hijri-iOS/*'
+          fi
+          test -s Hijri-iOS/Hijri.xcodeproj/project.pbxproj
+      - name: Set the app and widget bundle identifiers
+        script: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, re
+          from pathlib import Path
+
+          identifier = os.environ['HIJRI_BUNDLE_ID']
+          if not re.fullmatch(r'[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+', identifier):
+              raise SystemExit('Invalid bundle identifier')
+          project = Path('Hijri-iOS/Hijri.xcodeproj/project.pbxproj')
+          value = project.read_text()
+          if value.count('$(HIJRI_BUNDLE_ID)') != 4:
+              raise SystemExit('Expected bundle identifier settings for the app and widget')
+          project.write_text(value.replace('$(HIJRI_BUNDLE_ID)', identifier))
+          PY
+      - name: Set the App Store signing profiles
+        script: |
+          xcode-project use-profiles --project Hijri-iOS/Hijri.xcodeproj
+      - name: Export and verify the signed IPA
+        script: |
+          set -euo pipefail
+          xcode-project build-ipa --project Hijri-iOS/Hijri.xcodeproj --scheme Hijri --config Release
+          shopt -s nullglob
+          ipas=(build/ios/ipa/*.ipa)
+          test "${#ipas[@]}" -eq 1
+          python3 Hijri-iOS/verify-ipa.py "${ipas[0]}" "$HIJRI_BUNDLE_ID"
+    artifacts:
+      - build/ios/ipa/*.ipa
