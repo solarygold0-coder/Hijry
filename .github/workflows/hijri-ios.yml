@@ -38,12 +38,18 @@ jobs:
           xcodebuild -version
           plutil -lint Hijri-iOS/Hijri.xcodeproj/project.pbxproj
           bash Hijri-iOS/Checks/run-calendar-checks.sh
+      - name: Build the app and widget for iPhone and iPad devices
+        run: |
+          xcodebuild -project Hijri-iOS/Hijri.xcodeproj -scheme Hijri -configuration Release \
+            -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/hijri-device" \
+            CODE_SIGNING_ALLOWED=NO build
       - name: Build the app and widget for iOS Simulator
         run: |
           xcodebuild -project Hijri-iOS/Hijri.xcodeproj -scheme Hijri -configuration Release \
             -destination 'generic/platform=iOS Simulator' -derivedDataPath "$PWD/Hijri-iOS/build/simulator" \
             CODE_SIGNING_ALLOWED=NO build
       - name: Launch on iPhone and iPad simulators
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.export_ipa }}
         timeout-minutes: 10
         env:
           HIJRI_SKIP_SIMULATOR_BUILD: '1'

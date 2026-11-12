@@ -15,10 +15,10 @@ active_simulator=""
 fresh_simulator=""
 cleanup() {
     if [[ -n "$active_simulator" ]]; then
-        xcrun simctl shutdown "$active_simulator" >/dev/null 2>&1 || true
+        python3 -c 'import subprocess, sys; subprocess.run(["xcrun", "simctl", "shutdown", sys.argv[1]], timeout=15)' "$active_simulator" >/dev/null 2>&1 || true
     fi
     if [[ -n "$fresh_simulator" ]]; then
-        xcrun simctl delete "$fresh_simulator" >/dev/null 2>&1 || true
+        python3 -c 'import subprocess, sys; subprocess.run(["xcrun", "simctl", "delete", sys.argv[1]], timeout=15)' "$fresh_simulator" >/dev/null 2>&1 || true
     fi
 }
 trap cleanup EXIT
@@ -36,14 +36,31 @@ for model in 'iPhone 18 Pro Max' 'iPad Pro 13-inch (M5)'; do
     if [[ "$state" == Shutdown ]]; then
         active_simulator="$simulator"
     fi
-    python3 - "$simulator" <<'PYTHON'
+    python3 - "$simulator" "$state" "$app" "$bundle_id" <<'PYTHON'
 import subprocess
 import sys
+import time
 
-subprocess.run(["xcrun", "simctl", "bootstatus", sys.argv[1], "-b"], check=True, timeout=240)
+device, state, app, bundle_id = sys.argv[1:]
+if state == "Shutdown":
+    subprocess.run(["xcrun", "simctl", "boot", device], check=True, timeout=45)
+
+# CoreSimulator may stay in data migration after it can already install and
+# launch apps. Retry the operations the smoke check actually needs.
+for arguments in (
+    ["install", device, app],
+    ["launch", "--terminate-running-process", device, bundle_id],
+):
+    deadline = time.monotonic() + 120
+    while True:
+        try:
+            subprocess.run(["xcrun", "simctl", *arguments], check=True, timeout=20)
+            break
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(5)
 PYTHON
-    xcrun simctl install "$simulator" "$app"
-    xcrun simctl launch --terminate-running-process "$simulator" "$bundle_id"
     cleanup
     active_simulator=""
     fresh_simulator=""
