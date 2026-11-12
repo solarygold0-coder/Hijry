@@ -9,6 +9,11 @@ xcodebuild -project Hijri.xcodeproj -scheme Hijri -configuration Release \
 
 app="$build_dir/Build/Products/Release-iphonesimulator/Hijri.app"
 bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist")"
+if [[ "${HIJRI_ADHOC_SIMULATOR_SIGNING:-0}" == 1 ]]; then
+    /usr/bin/codesign --force --sign - "$app/PlugIns/HijriWidget.appex"
+    /usr/bin/codesign --force --sign - "$app"
+    /usr/bin/codesign --verify --deep --strict "$app"
+fi
 active_simulator=""
 fresh_simulator=""
 cleanup() {
@@ -22,7 +27,12 @@ cleanup() {
 trap cleanup EXIT
 
 sdk="$(xcrun --sdk iphonesimulator --show-sdk-version)"
-for model in "${HIJRI_IPHONE_SIMULATOR:-iPhone 18 Pro Max}" 'iPad Pro 13-inch (M5)'; do
+if [[ -n "${HIJRI_SIMULATOR_MODEL:-}" ]]; then
+    set -- "$HIJRI_SIMULATOR_MODEL"
+else
+    set -- 'iPhone 18 Pro Max' 'iPad Pro 13-inch (M5)'
+fi
+for model in "$@"; do
     selection="$(xcrun simctl list -j | python3 Checks/simulator-destination.py "$model" "$sdk")"
     IFS=' ' read -r simulator runtime state device_type <<<"$selection"
     printf 'Checking %s using %s\n' "$model" "$runtime"
@@ -47,12 +57,13 @@ if state == "Shutdown":
 # launch apps. Retry the operations the smoke check actually needs.
 for arguments in (
     ["install", device, app],
-    ["launch", "--terminate-running-process", device, bundle_id],
+    ["launch", device, bundle_id],
 ):
     deadline = time.monotonic() + 120
     while True:
         try:
-            subprocess.run(["xcrun", "simctl", *arguments], check=True, timeout=20)
+            subprocess.run(["xcrun", "simctl", *arguments], check=True, timeout=30)
+            print(f"Simulator {arguments[0]} succeeded", flush=True)
             break
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
             if time.monotonic() >= deadline:

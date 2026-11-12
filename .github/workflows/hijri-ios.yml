@@ -38,11 +38,17 @@ jobs:
           xcodebuild -version
           plutil -lint Hijri-iOS/Hijri.xcodeproj/project.pbxproj
           bash Hijri-iOS/Checks/run-calendar-checks.sh
-      - name: Build the app and widget for iPhone and iPad devices
+      - name: Archive and verify the iPhone and iPad build
         run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/Hijri.xcarchive"
           xcodebuild -project Hijri-iOS/Hijri.xcodeproj -scheme Hijri -configuration Release \
-            -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/hijri-device" \
-            CODE_SIGNING_ALLOWED=NO build
+            -destination 'generic/platform=iOS' -archivePath "$archive" \
+            CODE_SIGNING_ALLOWED=NO archive
+          app="$archive/Products/Applications/Hijri.app"
+          test -s "$app/Hijri"
+          test -s "$app/PlugIns/HijriWidget.appex/HijriWidget"
+          test -s "$app/PrivacyInfo.xcprivacy"
       - name: Build the app and widget for iOS Simulator
         run: |
           xcodebuild -project Hijri-iOS/Hijri.xcodeproj -scheme Hijri -configuration Release \
@@ -50,19 +56,24 @@ jobs:
             CODE_SIGNING_ALLOWED=NO build
 
   simulator:
-    name: Launch on iPhone and iPad simulators
+    name: Launch on ${{ matrix.simulator }}
     if: ${{ github.event_name != 'workflow_dispatch' || !inputs.export_ipa }}
     runs-on: macos-26
-    timeout-minutes: 12
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        simulator: ['iPhone 17 Pro Max', 'iPad Pro 13-inch (M5)']
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
-      HIJRI_IPHONE_SIMULATOR: iPhone 17 Pro Max
+      HIJRI_SIMULATOR_MODEL: ${{ matrix.simulator }}
+      HIJRI_ADHOC_SIMULATOR_SIGNING: '1'
       HIJRI_FRESH_SIMULATORS: '1'
     steps:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - name: Build and launch on both simulators
+      - name: Build and launch on the simulator
         run: bash Hijri-iOS/Checks/run-simulator-checks.sh
 
   export:
