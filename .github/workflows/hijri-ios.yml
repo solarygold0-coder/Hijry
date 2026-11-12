@@ -21,7 +21,7 @@ jobs:
     runs-on: xcode-27
     timeout-minutes: 35
     env:
-      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -38,7 +38,16 @@ jobs:
           xcodebuild -version
           plutil -lint Hijri-iOS/Hijri.xcodeproj/project.pbxproj
           bash Hijri-iOS/Checks/run-calendar-checks.sh
-      - name: Build and launch on iPhone and iPad simulators
+      - name: Build the app and widget for iOS Simulator
+        run: |
+          xcodebuild -project Hijri-iOS/Hijri.xcodeproj -scheme Hijri -configuration Release \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath "$PWD/Hijri-iOS/build/simulator" \
+            CODE_SIGNING_ALLOWED=NO build
+      - name: Launch on iPhone and iPad simulators
+        timeout-minutes: 10
+        env:
+          HIJRI_SKIP_SIMULATOR_BUILD: '1'
+          HIJRI_FRESH_SIMULATORS: '1'
         run: bash Hijri-iOS/Checks/run-simulator-checks.sh
 
   export:
@@ -48,7 +57,7 @@ jobs:
     runs-on: xcode-27
     timeout-minutes: 35
     env:
-      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
     steps:
       - uses: actions/checkout@v7.0.1
         with:

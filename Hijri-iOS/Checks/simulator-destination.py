@@ -11,6 +11,13 @@ def version(value):
 
 
 def select(catalog, model, sdk):
+    device_type = next(
+        (item["identifier"] for item in catalog["devicetypes"] if item["name"] == model),
+        None,
+    )
+    if device_type is None:
+        raise ValueError(f"Missing simulator device type: {model}")
+
     runtimes = sorted(
         (
             runtime for runtime in catalog["runtimes"]
@@ -24,7 +31,7 @@ def select(catalog, model, sdk):
         devices = catalog["devices"].get(runtime["identifier"], [])
         for device in devices:
             if device["name"] == model and device["isAvailable"]:
-                return device["udid"], runtime["identifier"], device["state"]
+                return device["udid"], runtime["identifier"], device["state"], device_type
     raise ValueError(f"No available simulator for {model} with SDK {sdk}")
 
 
