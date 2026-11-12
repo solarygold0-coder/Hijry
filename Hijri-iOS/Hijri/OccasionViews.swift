@@ -254,7 +254,7 @@ private struct OccasionPreferencesScreen: View {
                         ForEach(1...31, id: \.self) { Text(String($0)).tag($0) }
                     }
                     if item.isCompany && store.preferences.day(for: item) > 0 {
-                        Picker("عطلة نهاية الأسبوع", selection: Binding(get: { store.preferences.weekend[item] ?? .none },
+                        Picker("عطلة نهاية الأسبوع", selection: Binding(get: { store.preferences.weekend[item] ?? PayrollWeekend.none },
                                                                          set: { store.preferences.weekend[item] = $0 })) {
                             ForEach(PayrollWeekend.allCases) { Text($0.title).tag($0) }
                         }

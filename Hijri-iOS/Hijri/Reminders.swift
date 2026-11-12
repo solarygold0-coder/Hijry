@@ -26,7 +26,7 @@ enum ReminderTone: String, Codable, CaseIterable, Identifiable {
     var sound: UNNotificationSound? {
         switch self {
         case .system: return .default
-        case .classic: return .named(.init(rawValue: "alarm_fallback.wav"))
+        case .classic: return UNNotificationSound(named: .init(rawValue: "alarm_fallback.wav"))
         case .silent: return nil
         }
     }

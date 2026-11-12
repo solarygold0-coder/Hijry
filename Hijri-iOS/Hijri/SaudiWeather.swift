@@ -21,7 +21,7 @@ struct WeatherPlace: Identifiable, Codable, Equatable {
 }
 
 @MainActor
-final class WeatherStore: NSObject, ObservableObject, CLLocationManagerDelegate {
+final class WeatherStore: NSObject, ObservableObject, @preconcurrency CLLocationManagerDelegate {
     static let refreshIdentifier = (Bundle.main.bundleIdentifier ?? "com.taqwim.ummalqura") + ".weather-refresh"
     private let defaults = UserDefaults.standard
     private let center = UNUserNotificationCenter.current()
