@@ -32,7 +32,7 @@ cp ExportOptions.plist "$output/ExportOptions.plist"
 /usr/libexec/PlistBuddy -c "Add :teamID string $team" "$output/ExportOptions.plist"
 xcodebuild -project Hijri.xcodeproj -scheme Hijri -configuration Release \
     -destination 'generic/platform=iOS' -archivePath "$output/Hijri.xcarchive" \
-    -allowProvisioningUpdates "$@" DEVELOPMENT_TEAM="$team" HIJRI_BUNDLE_ID="$bundle" \
+    CODE_SIGNING_ALLOWED=NO DEVELOPMENT_TEAM="$team" HIJRI_BUNDLE_ID="$bundle" \
     CURRENT_PROJECT_VERSION="${HIJRI_BUILD_NUMBER:-1}" archive
 xcodebuild -exportArchive -archivePath "$output/Hijri.xcarchive" \
     -exportOptionsPlist "$output/ExportOptions.plist" -exportPath "$output/ipa" -allowProvisioningUpdates "$@"
