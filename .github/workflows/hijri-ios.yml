@@ -11,6 +11,10 @@ on:
         description: Export a signed App Store IPA after the checks
         type: boolean
         default: false
+      upload_testflight:
+        description: Upload the verified signed IPA to App Store Connect
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -102,6 +106,8 @@ jobs:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+          HIJRI_BUILD_NUMBER: ${{ github.run_number }}
+          UPLOAD_TESTFLIGHT: ${{ inputs.upload_testflight }}
         run: |
           set -euo pipefail
           : "${APPLE_TEAM_ID:?Set the Apple Developer Team ID in Actions variables}"
@@ -112,10 +118,17 @@ jobs:
           umask 077
           key_dir="$(mktemp -d)"
           trap 'rm -rf "$key_dir"' EXIT
-          export ASC_KEY_PATH="$key_dir/apple.p8"
+          export ASC_KEY_PATH="$key_dir/AuthKey_${ASC_KEY_ID}.p8"
           printf '%s\n' "$ASC_PRIVATE_KEY" > "$ASC_KEY_PATH"
           unset ASC_PRIVATE_KEY
           bash Hijri-iOS/export-ipa.sh "$APPLE_TEAM_ID" "$HIJRI_BUNDLE_ID"
+          if [[ "$UPLOAD_TESTFLIGHT" == true ]]; then
+            ipa_files=(Hijri-iOS/build/export.*/ipa/Hijri.ipa)
+            test "${#ipa_files[@]}" -eq 1
+            export API_PRIVATE_KEYS_DIR="$key_dir"
+            xcrun altool --upload-app --type ios --file "${ipa_files[0]}" \
+              --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+          fi
       - name: Make the signed IPA available for download
         uses: actions/upload-artifact@v7
         with:
