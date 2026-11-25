@@ -18,9 +18,9 @@ enum ReminderTone: String, Codable, CaseIterable, Identifiable {
     var id: Self { self }
     var title: String {
         switch self {
-        case .system: return "نغمة النظام"
-        case .classic: return "نغمة هجري"
-        case .silent: return "إشعار صامت"
+        case .system: return tr("نغمة النظام", "System sound")
+        case .classic: return tr("نغمة هجري", "Hijry sound")
+        case .silent: return tr("إشعار صامت", "Silent notification")
         }
     }
     var sound: UNNotificationSound? {
@@ -42,6 +42,7 @@ struct HijriReminder: Identifiable, Codable {
     var tone: ReminderTone? = nil
     var notifies: Bool? = nil
     var datedStart: Bool? = nil
+    var allowedWeekdays: Set<Int>? = nil
     var repeatMode: ReminderRepeat { recurrence ?? .once }
     var usesDatedNotifications: Bool { datedStart == true || repeatMode.usesDatedNotifications }
 }
@@ -86,16 +87,21 @@ final class Reminders: ObservableObject {
     }
 
     func add(title: String, notes: String, date selectedDate: Date, recurrence: ReminderRepeat,
-             tone: ReminderTone?, notify: Bool) async -> Bool {
+             tone: ReminderTone?, notify: Bool, weekdays: Set<Int>? = nil) async -> Bool {
         let date = calendar.dateInterval(of: .minute, for: selectedDate)?.start ?? selectedDate
         let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let allowedDays = recurrence == .daily ? weekdays : nil
+        if let allowedDays, allowedDays.isEmpty || !allowedDays.allSatisfy({ (1...7).contains($0) }) {
+            error = tr("اختر يومًا واحدًا على الأقل.", "Select at least one weekday.")
+            return false
+        }
         guard !name.isEmpty, !notify || recurrence != .once || date > Date() else {
             error = "أدخل اسم الموعد واختر وقتًا في المستقبل."
             return false
         }
         if !notify {
             entries.append(HijriReminder(title: name, date: date, usesSystemAlarm: false,
-                                         recurrence: recurrence, notes: notes, notifies: false))
+                                         recurrence: recurrence, notes: notes, notifies: false, allowedWeekdays: allowedDays))
             save()
             return true
         }
@@ -108,7 +114,7 @@ final class Reminders: ObservableObject {
             #if canImport(AlarmKit)
             if #available(iOS 26.0, *), !dated, tone != .silent {
                 let item = HijriReminder(title: name, date: date, usesSystemAlarm: true,
-                                         recurrence: recurrence, notes: notes, tone: tone, notifies: true)
+                                         recurrence: recurrence, notes: notes, tone: tone, notifies: true, allowedWeekdays: allowedDays)
                 let manager = AlarmManager.shared
                 guard try await manager.requestAuthorization() == .authorized else {
                     error = "اسمح لتطبيق هجري بجدولة المنبّهات من الإعدادات."
@@ -138,7 +144,7 @@ final class Reminders: ObservableObject {
                     let weekdays: [Locale.Weekday] = [.sunday, .monday, .tuesday, .wednesday, .thursday, .friday, .saturday]
                     schedule = .relative(.init(time: .init(hour: cal.component(.hour, from: date),
                                                          minute: cal.component(.minute, from: date)),
-                                               repeats: .weekly(recurrence == .daily ? weekdays : [weekdays[weekday - 1]])))
+                                               repeats: .weekly(recurrence == .daily ? (1...7).filter { allowedDays?.contains($0) ?? true }.map { weekdays[$0 - 1] } : [weekdays[weekday - 1]])))
                 }
                 let configuration = AlarmManager.AlarmConfiguration<HijriAlarmMetadata>.alarm(
                     schedule: schedule, attributes: attributes,
@@ -160,7 +166,7 @@ final class Reminders: ObservableObject {
                 return false
             }
             let item = HijriReminder(title: name, date: date, usesSystemAlarm: false,
-                                     recurrence: recurrence, notes: notes, tone: tone, notifies: true, datedStart: dated)
+                                     recurrence: recurrence, notes: notes, tone: tone, notifies: true, datedStart: dated, allowedWeekdays: allowedDays)
             if dated {
                 let count = await center.pendingNotificationRequests().count
                 guard count < 62 else {
@@ -171,6 +177,21 @@ final class Reminders: ObservableObject {
                     error = "لا يوجد تاريخ تنبيه تالٍ في نطاق التقويم."
                     return false
                 }
+            } else if recurrence == .daily, let allowedDays, allowedDays.count < 7 {
+                var added: [String] = []
+                do {
+                    for weekday in allowedDays.sorted() {
+                        var components = calendar.dateComponents([.hour, .minute], from: date)
+                        components.weekday = weekday
+                        let id = item.id.uuidString + ".weekday.\(weekday)"
+                        let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: true)
+                        try await LocalNotices.shared.add(UNNotificationRequest(identifier: id, content: content(for: item), trigger: trigger))
+                        added.append(id)
+                    }
+                } catch {
+                    center.removePendingNotificationRequests(withIdentifiers: added)
+                    throw error
+                }
             } else {
                 let trigger: UNNotificationTrigger
                 if recurrence == .once {
@@ -180,7 +201,7 @@ final class Reminders: ObservableObject {
                     trigger = UNCalendarNotificationTrigger(dateMatching: calendar.dateComponents(fields, from: date), repeats: true)
                 }
                 let request = UNNotificationRequest(identifier: item.id.uuidString, content: content(for: item), trigger: trigger)
-                try await center.add(request)
+                try await LocalNotices.shared.add(request)
             }
             entries.append(item)
             save()
@@ -214,7 +235,7 @@ final class Reminders: ObservableObject {
     private func scheduleDated(_ item: HijriReminder, limit: Int) async throws -> Int {
         let cal = calendar
         let dates = ReminderDates.upcoming(anchor: item.date, repeatMode: item.repeatMode, after: Date(),
-                                           limit: limit, calendar: cal, table: UmmAlQura.bundled)
+                                           limit: limit, calendar: cal, table: UmmAlQura.bundled, allowedWeekdays: item.allowedWeekdays)
         let alreadyScheduled = Set(await center.pendingNotificationRequests().map(\.identifier))
         var identifiers: [String] = []
         var added: [String] = []
@@ -225,7 +246,7 @@ final class Reminders: ObservableObject {
                 let components = cal.dateComponents([.year, .month, .day, .hour, .minute], from: date)
                 let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
                 if !alreadyScheduled.contains(id) {
-                    try await center.add(UNNotificationRequest(identifier: id, content: content(for: item), trigger: trigger))
+                    try await LocalNotices.shared.add(UNNotificationRequest(identifier: id, content: content(for: item), trigger: trigger))
                     added.append(id)
                 }
                 identifiers.append(id)
@@ -259,6 +280,11 @@ final class Reminders: ObservableObject {
         }
     }
 
+    func refreshAndWait() async {
+        refreshDatedNotices()
+        await rollingTask?.value
+    }
+
     @discardableResult
     func remove(_ item: HijriReminder) -> Bool {
         #if canImport(AlarmKit)
@@ -274,8 +300,9 @@ final class Reminders: ObservableObject {
             }
         }
         #endif
-        center.removePendingNotificationRequests(withIdentifiers: [item.id.uuidString])
-        center.removeDeliveredNotifications(withIdentifiers: [item.id.uuidString])
+        let ids = [item.id.uuidString] + (1...7).map { item.id.uuidString + ".weekday.\($0)" }
+        center.removePendingNotificationRequests(withIdentifiers: ids)
+        center.removeDeliveredNotifications(withIdentifiers: ids)
         if item.usesDatedNotifications {
             Task { await removeDatedNotices(for: item.id) }
         }

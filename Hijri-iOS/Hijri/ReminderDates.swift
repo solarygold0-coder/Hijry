@@ -6,13 +6,13 @@ enum ReminderRepeat: String, Codable, CaseIterable, Identifiable {
     var id: Self { self }
     var title: String {
         switch self {
-        case .once: return "مرة واحدة"
-        case .daily: return "يوميًا"
-        case .weekly: return "أسبوعيًا"
-        case .monthly: return "شهريًا ميلاديًا"
-        case .yearly: return "سنويًا ميلاديًا"
-        case .hijriMonthly: return "شهريًا هجريًا"
-        case .hijriYearly: return "سنويًا هجريًا"
+        case .once: return domain("مرة واحدة")
+        case .daily: return domain("يوميًا")
+        case .weekly: return domain("أسبوعيًا")
+        case .monthly: return domain("شهريًا ميلاديًا")
+        case .yearly: return domain("سنويًا ميلاديًا")
+        case .hijriMonthly: return domain("شهريًا هجريًا")
+        case .hijriYearly: return domain("سنويًا هجريًا")
         }
     }
 
@@ -26,7 +26,7 @@ enum ReminderRepeat: String, Codable, CaseIterable, Identifiable {
 
 enum ReminderDates {
     static func upcoming(anchor: Date, repeatMode: ReminderRepeat, after: Date, limit: Int,
-                         calendar: Calendar, table: UmmAlQura?) -> [Date] {
+                         calendar: Calendar, table: UmmAlQura?, allowedWeekdays: Set<Int>? = nil) -> [Date] {
         guard limit > 0, repeatMode != .once else { return [] }
         let current = max(anchor, after)
         let time = calendar.dateComponents([.hour, .minute], from: anchor)
@@ -35,9 +35,10 @@ enum ReminderDates {
             let start = calendar.startOfDay(for: anchor)
             let elapsed = calendar.dateComponents([.day], from: start, to: calendar.startOfDay(for: current)).day ?? 0
             let first = elapsed / step
-            return Array((first...(first + limit)).compactMap { index -> Date? in
+            return Array((first...(first + limit * 7)).compactMap { index -> Date? in
                 guard let day = calendar.date(byAdding: .day, value: index * step, to: start),
-                      let event = eventTime(on: day, time: time, calendar: calendar), event > after else { return nil }
+                      let event = eventTime(on: day, time: time, calendar: calendar), event > after,
+                      allowedWeekdays?.contains(calendar.component(.weekday, from: event)) ?? true else { return nil }
                 return event
             }.prefix(limit))
         }

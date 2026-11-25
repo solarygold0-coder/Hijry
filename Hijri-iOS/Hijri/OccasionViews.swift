@@ -55,6 +55,11 @@ final class OccasionStore: ObservableObject {
         }
     }
 
+    func refreshAndWait() async {
+        refresh()
+        await updateTask?.value
+    }
+
     private func schedule() async {
         let requests = await center.pendingNotificationRequests()
         guard !Task.isCancelled else { return }
@@ -91,13 +96,14 @@ final class OccasionStore: ObservableObject {
             let content = UNMutableNotificationContent()
             content.title = (lead == 1 ? "غدًا: " : "اليوم: ") + event.title
             content.sound = .default
+            content.userInfo = ["page": "occasions"]
             content.threadIdentifier = "hijri.occasions"
             var components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: fire)
             components.calendar = calendar
             components.timeZone = calendar.timeZone
             let request = UNNotificationRequest(identifier: prefix + event.id + "." + String(lead),
                                                 content: content, trigger: UNCalendarNotificationTrigger(dateMatching: components, repeats: false))
-            do { try await center.add(request) }
+            do { try await LocalNotices.shared.add(request) }
             catch {
                 notificationMessage = "تعذّرت جدولة بعض تنبيهات المناسبات."
                 return
@@ -109,96 +115,113 @@ final class OccasionStore: ObservableObject {
 struct OccasionsScreen: View {
     let table: UmmAlQura?
     @ObservedObject var store: OccasionStore
+    @EnvironmentObject private var weather: WeatherStore
+    @EnvironmentObject private var extras: ExtraReminders
+    @Environment(\.hijriPalette) private var palette
     @State private var settings = false
     @State private var showMansions = false
-
-    private var entries: [HijriOccasion] {
-        HijriOccasions.entries(from: Date(), table: table, preferences: store.preferences)
-    }
-
+    @State private var fasting = false
+    @State private var weatherSheet = false
+    @State private var payroll: HijriOccasion?
+    private var entries: [HijriOccasion] { HijriOccasions.entries(from: Date(), table: table, preferences: store.preferences) }
     private var catalog: [(key: String, title: String)] {
-        [("season", "الموسم والمنازل")] +
-            entries.filter { event in !OccasionSchedule.allCases.contains(where: { $0.id == event.key }) }
-                .map { ($0.key, $0.title) } +
-            OccasionSchedule.allCases.map { ($0.id, $0.title) }
+        [("season", tr("الموسم والمنازل", "Seasons and lunar mansions")), ("fasting", tr("الصيام المستحب", "Voluntary fasting"))] +
+        entries.filter { event in !OccasionSchedule.allCases.contains(where: { $0.id == event.key }) }.map { ($0.key, $0.title) } +
+        OccasionSchedule.allCases.map { ($0.id, $0.title) }
     }
-
     private var order: [String] {
-        let available = catalog.map { $0.key }
-        return store.preferences.order.filter { available.contains($0) }
-            + available.filter { !store.preferences.order.contains($0) }
+        let available = catalog.map(\.key)
+        return store.preferences.order.filter { available.contains($0) } + available.filter { !store.preferences.order.contains($0) }
     }
-
     var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    Picker("التقويم الدراسي", selection: $store.preferences.western) {
-                        Text("عموم المناطق").tag(false)
-                        Text("مكة والمدينة وجدة والطائف").tag(true)
-                    }
-                    Button("تنبيهات الفواتير والمناسبات") { settings = true }
+        TimelineView(.everyMinute) { context in
+            DesignPage(title: tr("المناسبات القادمة", "Upcoming events")) {
+                HStack {
+                    Button(tr("الإجازات المدرسية", "School holidays")) { settings = true }
+                    Spacer()
+                    Button { settings = true } label: { Image(systemName: "slider.horizontal.3").frame(width: 44, height: 44) }
+                        .accessibilityLabel(tr("إعدادات المناسبات", "Event settings"))
                 }
-                Section("القادمة") {
-                    ForEach(order.filter { !store.preferences.hidden.contains($0) }, id: \.self) { id in
-                        if id == "season" {
-                            mansions
-                        } else if let event = entries.first(where: { $0.key == id }) {
-                            eventRow(event)
-                        }
+                WeatherSummary(store: weather) { weatherSheet = true }
+                ForEach(order.filter { !store.preferences.hidden.contains($0) }, id: \.self) { id in
+                    if id == "season" { mansions(today: context.date) }
+                    else if id == "fasting" { fastingCard(today: context.date) }
+                    else if let event = entries.first(where: { $0.key == id }) { eventRow(event, today: context.date) }
+                }
+            }
+        }
+        .sheet(isPresented: $settings) { NavigationStack { OccasionPreferencesScreen(store: store, catalog: catalog).modifier(DesignRootStyle()) } }
+        .sheet(isPresented: $fasting) { if let table { FastingScreen(table: table) } }
+        .sheet(isPresented: $weatherSheet) { NavigationStack { SaudiWeather(store: weather) } }
+        .sheet(item: $payroll) { event in PayrollTasksScreen(event: event) }
+    }
+    private func eventRow(_ event: HijriOccasion, today: Date) -> some View {
+        DesignCard(selected: true) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(spacing: 4) {
+                    Text(String(SaudiCalendar.calendar.component(.day, from: event.date))).font(.title2.bold())
+                    Text(event.date, format: .dateTime.month(.abbreviated)).font(.caption).environment(\.timeZone, SaudiCalendar.calendar.timeZone)
+                }.frame(width: 56, height: 58).background(palette.selected, in: DesignShape(theme: palette.theme))
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(domain(event.title)).font(.headline)
+                    if let table { Text(DateLabels.date(event.date, hijri: true, table: table, timeZone: SaudiCalendar.calendar.timeZone)).font(.subheadline) }
+                    Text(DateLabels.weekday(event.date, timeZone: SaudiCalendar.calendar.timeZone)).font(.caption)
+                    if let last = event.end { Text(tr("إلى ", "Until ") + format(last)).font(.caption) }
+                    if event.estimated { Text(tr("موعد متوقع", "Estimated date")).font(.caption2) }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+                VStack(spacing: 6) {
+                    Text(String(max(0, SaudiCalendar.days(from: SaudiCalendar.calendar.startOfDay(for: today), to: event.date))))
+                        .font(.system(size: 26, weight: .bold)).foregroundStyle(palette.accent)
+                    Text(tr("يوم متبقي", "days left")).font(.caption2)
+                    if event.payment {
+                        Button(tr("مهمة", "Task")) { payroll = event }.buttonStyle(.bordered).font(.caption)
                     }
                 }
             }
-            .navigationTitle("المناسبات")
-            .sheet(isPresented: $settings) {
-                NavigationStack { OccasionPreferencesScreen(store: store, catalog: catalog) }
-            }
         }
     }
-
-    private func eventRow(_ event: HijriOccasion) -> some View {
-        let today = SaudiCalendar.calendar.startOfDay(for: Date())
-        let remaining = SaudiCalendar.days(from: today, to: event.date)
-        return VStack(alignment: .leading, spacing: 4) {
-            Text(event.title).font(.headline)
-            Text(format(event.date) + (event.end.map { " – " + format($0) } ?? ""))
-            if remaining > 0 { Text("متبقي \(remaining) يومًا") }
-            else { Text(remaining == 0 ? "اليوم" : "جارية") }
-            if event.estimated { Text("موعد متوقع").font(.caption) }
-        }
-        .foregroundStyle(.primary)
-        .padding(.vertical, 3)
-    }
-
-    @ViewBuilder private var mansions: some View {
-        let today = SaudiCalendar.calendar.startOfDay(for: Date())
+    @ViewBuilder private func mansions(today: Date) -> some View {
         let timeline = TraditionalSeasons.timeline(from: today)
         if let current = timeline.first {
-            DisclosureGroup(isExpanded: $showMansions) {
-                ForEach(timeline) { mansion in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(mansion.name + " · " + mansion.season).font(.headline)
-                        Text(format(mansion.start) + " – " + format(mansion.lastDay))
-                            .foregroundStyle(.secondary)
+            DesignCard {
+                DisclosureGroup(isExpanded: $showMansions) {
+                    ForEach(timeline) { mansion in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(domain(mansion.name) + " · " + domain(mansion.season)).font(.headline)
+                            Text(format(mansion.start) + " – " + format(mansion.lastDay)).font(.caption)
+                            Divider()
+                        }.padding(.vertical, 5)
                     }
-                    .padding(.vertical, 4)
-                }
-            } label: {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("الموسم الحالي: \(current.season)").font(.headline)
-                    Text("المنزلة الحالية: \(current.name)")
-                    Text("متبقي \(SaudiCalendar.days(from: today, to: current.nextStart)) يومًا")
-                    if let next = timeline.dropFirst().first {
-                        Text("التالية: \(next.name)").foregroundStyle(.secondary)
+                } label: {
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text(tr("الموسم الحالي: ", "Current season: ") + domain(current.season)).font(.subheadline.bold()).foregroundStyle(palette.accent)
+                        Text(tr("المنزلة الحالية: ", "Current mansion: ") + domain(current.name)).font(.title3.bold())
+                        Text(tr("متبقي \(SaudiCalendar.days(from: SaudiCalendar.calendar.startOfDay(for: today), to: current.nextStart)) يوم", "\(SaudiCalendar.days(from: SaudiCalendar.calendar.startOfDay(for: today), to: current.nextStart)) days left")).font(.headline)
+                        if let next = timeline.dropFirst().first { Text(tr("التالية: ", "Next: ") + domain(next.name)).font(.subheadline) }
+                        Text(tr("تقويم الأنواء التقريبي", "Traditional seasonal calendar (approximate)")).font(.caption2)
                     }
                 }
             }
         }
     }
-
+    private func fastingCard(today: Date) -> some View {
+        DesignCard {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Toggle(tr("الصيام المستحب", "Voluntary fasting"), isOn: $extras.fasting.enabled).font(.headline)
+                    Button { fasting = true } label: { Image(systemName: "gearshape").frame(width: 44, height: 44) }
+                        .accessibilityLabel(tr("إعدادات الصيام", "Fasting settings"))
+                }
+                if let table, let next = FastingPlan.upcoming(from: today, settings: extras.fasting, table: table, limit: 1).first {
+                    Text(next.types.map(\.title).joined(separator: " • ")).font(.subheadline)
+                    Text(DateLabels.date(next.date, hijri: true, table: table)).font(.caption)
+                }
+            }
+        }
+    }
     private func format(_ date: Date) -> String {
         let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "ar_SA")
+        formatter.locale = Locale(identifier: tr("ar_SA", "en_US"))
         formatter.calendar = SaudiCalendar.calendar
         formatter.timeZone = SaudiCalendar.calendar.timeZone
         formatter.dateFormat = "d MMMM yyyy"
@@ -246,6 +269,12 @@ private struct OccasionPreferencesScreen: View {
                 DatePicker("وقت التنبيه", selection: notificationTime, displayedComponents: .hourAndMinute)
                 if let message = store.notificationMessage { Text(message).foregroundStyle(.secondary) }
             }
+            Section(tr("التقويم الدراسي", "School calendar")) {
+                Picker(tr("المنطقة", "Region"), selection: $store.preferences.western) {
+                    Text(tr("عموم المناطق", "All regions")).tag(false)
+                    Text(tr("مكة والمدينة وجدة والطائف", "Makkah, Madinah, Jeddah and Taif")).tag(true)
+                }
+            }
             Section("الفواتير ورواتب الشركات") {
                 ForEach(OccasionSchedule.allCases) { item in
                     Picker(item.title, selection: Binding(get: { store.preferences.day(for: item) },
@@ -276,6 +305,8 @@ private struct OccasionPreferencesScreen: View {
                 }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background { DesignBackground() }
         .navigationTitle("المناسبات والفواتير")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("تم") { dismiss() } }

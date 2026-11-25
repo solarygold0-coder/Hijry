@@ -139,8 +139,8 @@ final class WeatherStore: NSObject, ObservableObject, @preconcurrency CLLocation
             submitBackgroundRefresh()
             startRefresh()
         } else {
-            BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: Self.refreshIdentifier)
             await removeForecastNotices()
+            submitBackgroundRefresh()
         }
     }
 
@@ -165,7 +165,7 @@ final class WeatherStore: NSObject, ObservableObject, @preconcurrency CLLocation
             let weather = try await weatherService.weather(for: position)
             let credit = try await weatherService.attribution
             guard !Task.isCancelled, requestedPlace == place else { return }
-            let days = Array(weather.dailyForecast.forecast.prefix(3))
+            let days = Array(weather.dailyForecast.forecast.prefix(8))
             attribution = credit
             forecast = Array(days.prefix(2))
             if alerts { await scheduleForecasts(days, for: requestedPlace) }
@@ -175,9 +175,9 @@ final class WeatherStore: NSObject, ObservableObject, @preconcurrency CLLocation
     }
 
     func submitBackgroundRefresh() {
-        guard alerts else { return }
+        guard alerts || defaults.bool(forKey: "hijri.hasScheduledReminders") else { return }
         let request = BGAppRefreshTaskRequest(identifier: Self.refreshIdentifier)
-        request.earliestBeginDate = Date().addingTimeInterval(4 * 3600)
+        request.earliestBeginDate = Date().addingTimeInterval(30 * 60)
         try? BGTaskScheduler.shared.submit(request)
     }
 
@@ -206,12 +206,13 @@ final class WeatherStore: NSObject, ObservableObject, @preconcurrency CLLocation
             content.body = Self.temperatures(day) + (phenomenon.map { " · " + $0 } ?? "")
             content.sound = .default
             content.threadIdentifier = "hijri.weather"
+            content.userInfo = ["page": "weather"]
             var components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: send)
             components.calendar = calendar
             components.timeZone = calendar.timeZone
             let identifier = forecastPrefix + String(Int(send.timeIntervalSince1970))
             let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
-            try? await center.add(UNNotificationRequest(identifier: identifier, content: content, trigger: trigger))
+            try? await LocalNotices.shared.add(UNNotificationRequest(identifier: identifier, content: content, trigger: trigger))
             if !alerts || requestedPlace != place || Task.isCancelled {
                 center.removePendingNotificationRequests(withIdentifiers: [identifier])
                 return
@@ -245,53 +246,73 @@ final class WeatherStore: NSObject, ObservableObject, @preconcurrency CLLocation
 struct SaudiWeather: View {
     @ObservedObject var store: WeatherStore
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dismiss) private var dismiss
     @State private var asking = false
-
     var body: some View {
-        NavigationStack {
-            Form {
-                Picker("الموقع", selection: Binding(get: { store.place.id }, set: { store.selectCity($0) })) {
-                    ForEach(WeatherPlace.cities) { Text($0.title).tag($0.id) }
-                    if store.place.id == "location" { Text(store.place.title).tag("location") }
-                }
-                Button(store.locating ? "جارٍ تحديد الموقع…" : "استخدم موقعي") { store.useLocation() }
-                    .disabled(store.locating)
-                if let message = store.message {
-                    Text(message).foregroundStyle(.secondary)
-                    Button("إعادة المحاولة") { store.startRefresh() }
-                } else if store.forecast.isEmpty {
-                    ProgressView("جارٍ تحديث الطقس…")
-                }
-                ForEach(Array(store.forecast.enumerated()), id: \.offset) { index, day in
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(index == 0 ? "اليوم" : "غدًا").font(.headline)
-                        Text(WeatherStore.temperatures(day))
-                        if let phenomenon = WeatherStore.phenomenon(day.condition) {
-                            Label(phenomenon, systemImage: day.symbolName).foregroundStyle(.secondary)
-                        }
+        DesignPage(title: tr("الطقس", "Weather")) {
+            DesignCard {
+                VStack(alignment: .leading, spacing: 12) {
+                    Picker(tr("الموقع", "Location"), selection: Binding(get: { store.place.id }, set: { store.selectCity($0) })) {
+                        ForEach(WeatherPlace.cities) { Text(domain($0.title)).tag($0.id) }
+                        if store.place.id == "location" { Text(domain(store.place.title)).tag("location") }
                     }
+                    Button(store.locating ? tr("جارٍ تحديد الموقع…", "Locating…") : tr("استخدم موقعي", "Use my location")) { store.useLocation() }.disabled(store.locating)
+                    Toggle(tr("تنبيه طقس الغد", "Tomorrow’s weather notification"), isOn: Binding(get: { store.alerts }, set: { enabled in
+                        asking = true
+                        Task { await store.setAlerts(enabled); asking = false }
+                    })).disabled(asking)
+                    if let message = store.message {
+                        Text(message).font(.footnote)
+                        Button(tr("إعادة المحاولة", "Try again")) { store.startRefresh() }
+                    } else if store.forecast.isEmpty { ProgressView(tr("جارٍ تحديث الطقس…", "Updating weather…")) }
                 }
-                Toggle("تنبيه طقس الغد", isOn: Binding(get: { store.alerts }, set: { enabled in
-                    asking = true
-                    Task {
-                        await store.setAlerts(enabled)
-                        asking = false
-                    }
-                }))
-                .disabled(asking)
-                if let attribution = store.attribution {
-                    Link(destination: attribution.legalPageURL) {
-                        AsyncImage(url: colorScheme == .dark ? attribution.combinedMarkLightURL : attribution.combinedMarkDarkURL) { image in
-                            image.resizable().scaledToFit()
-                        } placeholder: {
-                            Text("Apple Weather")
-                        }
-                        .frame(maxWidth: 150, minHeight: 24, maxHeight: 36)
+            }
+            ForEach(Array(store.forecast.enumerated()), id: \.offset) { index, day in
+                DesignCard {
+                    HStack {
+                        Image(systemName: day.symbolName).font(.largeTitle).symbolRenderingMode(.multicolor).frame(width: 60)
+                        VStack(alignment: .leading, spacing: 7) {
+                            Text(index == 0 ? tr("اليوم", "Today") : tr("غدًا", "Tomorrow")).font(.headline)
+                            Text(WeatherStore.temperatures(day)).font(.subheadline)
+                            if let phenomenon = WeatherStore.phenomenon(day.condition) { Text(domain(phenomenon)).font(.caption) }
+                        }.frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
             }
-            .navigationTitle("الطقس")
-            .onAppear { if store.forecast.isEmpty { store.startRefresh() } }
+            if let attribution = store.attribution {
+                Link(destination: attribution.legalPageURL) {
+                    AsyncImage(url: colorScheme == .dark ? attribution.combinedMarkLightURL : attribution.combinedMarkDarkURL) { image in
+                        image.resizable().scaledToFit()
+                    } placeholder: { Text("Apple Weather") }
+                    .frame(maxWidth: 150, minHeight: 24, maxHeight: 36)
+                }
+            }
         }
+        .toolbar { ToolbarItem(placement: .confirmationAction) { Button(tr("تم", "Done")) { dismiss() } } }
+        .onAppear { if store.forecast.isEmpty { store.startRefresh() } }
+        .modifier(DesignRootStyle())
+    }
+}
+
+struct WeatherSummary: View {
+    @ObservedObject var store: WeatherStore
+    var open: () -> Void
+    var body: some View {
+        Button(action: open) {
+            DesignCard {
+                HStack(spacing: 10) {
+                    Image(systemName: store.forecast.first?.symbolName ?? "cloud.sun").font(.system(size: 32)).symbolRenderingMode(.multicolor)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(domain(store.place.title)).font(.headline)
+                        if let day = store.forecast.first {
+                            Text(WeatherStore.temperatures(day)).font(.subheadline)
+                            if let phenomenon = WeatherStore.phenomenon(day.condition) { Text(domain(phenomenon)).font(.caption) }
+                        } else { Text(tr("الطقس", "Weather")).font(.subheadline) }
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                    Image(systemName: "chevron.left").font(.caption)
+                }
+            }
+        }.buttonStyle(.plain)
+        .onAppear { if store.forecast.isEmpty { store.startRefresh() } }
     }
 }

@@ -18,17 +18,18 @@ enum SaudiCalendar {
 
 enum OccasionSchedule: String, Codable, CaseIterable, Identifiable {
     case electricity, telecom, water, aramco, sabic
+    static let allCases: [OccasionSchedule] = [.telecom, .aramco, .sabic]
 
     var id: String { rawValue }
     var isCompany: Bool { self == .aramco || self == .sabic }
-    var defaultDay: Int { self == .electricity || self == .water ? 28 : 0 }
+    var defaultDay: Int { 0 }
     var title: String {
         switch self {
-        case .electricity: return "فاتورة الكهرباء"
-        case .telecom: return "فاتورة الاتصالات"
-        case .water: return "فاتورة المياه"
-        case .aramco: return "رواتب أرامكو"
-        case .sabic: return "رواتب سابك"
+        case .electricity: return domain("فاتورة الكهرباء")
+        case .telecom: return domain("فاتورة الاتصالات")
+        case .water: return domain("فاتورة المياه")
+        case .aramco: return domain("رواتب أرامكو")
+        case .sabic: return domain("رواتب سابك")
         }
     }
 }
@@ -39,9 +40,9 @@ enum PayrollWeekend: String, Codable, CaseIterable, Identifiable {
     var id: Self { self }
     var title: String {
         switch self {
-        case .none: return "دون تعديل"
-        case .previous: return "تقديم إلى الخميس"
-        case .next: return "تأخير إلى الأحد"
+        case .none: return domain("دون تعديل")
+        case .previous: return domain("تقديم إلى الخميس")
+        case .next: return domain("تأخير إلى الأحد")
         }
     }
 
