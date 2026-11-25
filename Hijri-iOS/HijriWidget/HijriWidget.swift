@@ -33,6 +33,7 @@ struct HijriProvider: TimelineProvider {
 
 struct HijriWidgetView: View {
     let entry: HijriDayEntry
+    @Environment(\.widgetFamily) private var family
     var content: some View {
         VStack(alignment: .leading, spacing: 5) {
             Label("هجري", systemImage: "calendar").font(.caption).foregroundStyle(.secondary)
@@ -45,10 +46,12 @@ struct HijriWidgetView: View {
         .environment(\.layoutDirection, .rightToLeft)
     }
     var body: some View {
-        if #available(iOS 17, *) {
-            content.containerBackground(.fill.tertiary, for: .widget)
+        if family == .accessoryInline {
+            Text(entry.label).widgetURL(URL(string: "hijry://calendar"))
+        } else if #available(iOS 17, *) {
+            content.containerBackground(.clear, for: .widget).widgetURL(URL(string: "hijry://calendar"))
         } else {
-            content.padding().background(Color(uiColor: .secondarySystemBackground))
+            content.padding(8).widgetURL(URL(string: "hijry://calendar"))
         }
     }
 }
@@ -59,6 +62,6 @@ struct HijriDateWidget: Widget {
         StaticConfiguration(kind: "HijriDateWidget", provider: HijriProvider()) { HijriWidgetView(entry: $0) }
             .configurationDisplayName("تاريخ اليوم")
             .description("يعرض تاريخ اليوم حسب تقويم أم القرى.")
-            .supportedFamilies([.systemSmall, .systemMedium])
+            .supportedFamilies([.systemSmall, .systemMedium, .accessoryRectangular, .accessoryInline])
     }
 }
