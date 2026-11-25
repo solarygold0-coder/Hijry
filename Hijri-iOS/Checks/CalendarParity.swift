@@ -61,6 +61,28 @@ struct CalendarParity {
         let westernSchool = HijriOccasions.entries(from: day(2027, 4, 1), table: table, preferences: western)
         precondition(westernSchool.contains { $0.key == "school-2027-04-30" })
         precondition(!westernSchool.contains { $0.key == "school-2027-04-11" })
+        var fasting = FastingSettings()
+        fasting.enabled = true
+        fasting.types = Set(FastingType.allCases)
+        for (month, date) in [(9, 13), (10, 1), (12, 10), (12, 11), (12, 12), (12, 13)] {
+            let civil = table.date(year: 1448, month: month, day: date, in: calendar.timeZone)!
+            precondition(FastingPlan.reasons(date: civil, settings: fasting, table: table, calendar: calendar).isEmpty)
+        }
+        let arafah = table.date(year: 1448, month: 12, day: 9, in: calendar.timeZone)!
+        precondition(FastingPlan.reasons(date: arafah, settings: fasting, table: table, calendar: calendar).contains(.arafah))
+        fasting.pilgrim = true
+        precondition(FastingPlan.reasons(date: arafah, settings: fasting, table: table, calendar: calendar).isEmpty)
+        fasting.pilgrim = false
+        fasting.types = [.shawwal]
+        fasting.shawwalYear = 1448
+        fasting.shawwalDays = [2, 5, 7]
+        let shawwal = table.date(year: 1448, month: 10, day: 5, in: calendar.timeZone)!
+        precondition(FastingPlan.reasons(date: shawwal, settings: fasting, table: table, calendar: calendar) == [.shawwal])
+        precondition(FastingPlan.upcoming(from: shawwal, settings: fasting, table: table, limit: 0).isEmpty)
+        let weekdays = ReminderDates.upcoming(anchor: day(2027, 2, 1), repeatMode: .daily,
+            after: day(2027, 2, 1), limit: 4, calendar: calendar, table: table, allowedWeekdays: [2, 5])
+        precondition(weekdays.count == 4)
+        precondition(weekdays.allSatisfy { [2, 5].contains(calendar.component(.weekday, from: $0)) })
         print("Hijri Android calendar rules passed")
     }
 }

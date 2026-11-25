@@ -70,6 +70,7 @@ for arguments in (
                 raise
             time.sleep(5)
 PYTHON
+    python3 Checks/capture-theme-previews.py "$simulator" "$bundle_id" "build/previews/$model"
     cleanup
     active_simulator=""
     fresh_simulator=""
