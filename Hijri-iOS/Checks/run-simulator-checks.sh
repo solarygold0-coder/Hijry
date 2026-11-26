@@ -36,7 +36,7 @@ for model in "$@"; do
     selection="$(xcrun simctl list -j | python3 Checks/simulator-destination.py "$model" "$sdk")"
     IFS=' ' read -r simulator runtime state device_type <<<"$selection"
     printf 'Checking %s using %s\n' "$model" "$runtime"
-    if [[ "${HIJRI_FRESH_SIMULATORS:-0}" == 1 ]]; then
+    if [[ "$simulator" == uncreated || "${HIJRI_FRESH_SIMULATORS:-0}" == 1 ]]; then
         fresh_simulator="$(xcrun simctl create "Hijri check - $model" "$device_type" "$runtime")"
         simulator="$fresh_simulator"
         state=Shutdown
@@ -53,16 +53,23 @@ device, state, app, bundle_id = sys.argv[1:]
 if state == "Shutdown":
     subprocess.run(["xcrun", "simctl", "boot", device], check=True, timeout=45)
 
-# CoreSimulator may stay in data migration after it can already install and
-# launch apps. Retry the operations the smoke check actually needs.
+# A newly created device must finish first-boot migration before installation.
+# Capture diagnostics on failure rather than treating an unready device as an
+# application crash.
+subprocess.run(["open", "-a", "Simulator", "--args", "-CurrentDeviceUDID", device], check=False, timeout=15)
+try:
+    subprocess.run(["xcrun", "simctl", "bootstatus", device, "-b"], check=True, timeout=180)
+except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+    subprocess.run(["xcrun", "simctl", "list", "devices"], timeout=20)
+    raise
 for arguments in (
     ["install", device, app],
     ["launch", device, bundle_id],
 ):
-    deadline = time.monotonic() + 120
+    deadline = time.monotonic() + 180
     while True:
         try:
-            subprocess.run(["xcrun", "simctl", *arguments], check=True, timeout=30)
+            subprocess.run(["xcrun", "simctl", *arguments], check=True, timeout=60)
             print(f"Simulator {arguments[0]} succeeded", flush=True)
             break
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
