@@ -62,14 +62,23 @@ jobs:
   simulator:
     name: Launch on ${{ matrix.simulator }}
     if: ${{ github.event_name != 'workflow_dispatch' || !inputs.export_ipa }}
-    runs-on: macos-26
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
-        simulator: ['iPhone 17 Pro Max', 'iPad Pro 13-inch (M5)']
+        include:
+          - simulator: iPhone 12
+            runner: macos-26
+            xcode: '26.6'
+          - simulator: iPhone 18 Pro Max
+            runner: xcode-27
+            xcode: '27.2'
+          - simulator: iPad Pro 13-inch (M5)
+            runner: macos-26
+            xcode: '26.6'
     env:
-      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      DEVELOPER_DIR: /Applications/Xcode_${{ matrix.xcode }}.app/Contents/Developer
       HIJRI_SIMULATOR_MODEL: ${{ matrix.simulator }}
       HIJRI_ADHOC_SIMULATOR_SIGNING: '1'
       HIJRI_FRESH_SIMULATORS: '1'
@@ -79,6 +88,13 @@ jobs:
           persist-credentials: false
       - name: Build and launch on the simulator
         run: bash Hijri-iOS/Checks/run-simulator-checks.sh
+      - name: Save theme screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: Theme screenshots - ${{ matrix.simulator }}
+          path: Hijri-iOS/build/previews/
+          if-no-files-found: warn
 
   export:
     name: Export signed App Store IPA
@@ -128,10 +144,12 @@ jobs:
             export API_PRIVATE_KEYS_DIR="$key_dir"
             xcrun altool --upload-app --type ios --file "${ipa_files[0]}" \
               --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+            python3 Hijri-iOS/prepare-testflight.py 6837948866 "$HIJRI_BUILD_NUMBER"
           fi
       - name: Make the signed IPA available for download
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           path: Hijri-iOS/build/export.*/ipa/Hijri.ipa
           archive: false
-          if-no-files-found: error
+          if-no-files-found: warn
