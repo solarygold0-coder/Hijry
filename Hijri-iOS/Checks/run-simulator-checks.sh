@@ -56,7 +56,8 @@ if state == "Shutdown":
 # A newly created device must finish first-boot migration before installation.
 # Capture diagnostics on failure rather than treating an unready device as an
 # application crash.
-subprocess.run(["open", "-a", "Simulator", "--args", "-CurrentDeviceUDID", device], check=False, timeout=15)
+subprocess.Popen(["open", "-a", "Simulator", "--args", "-CurrentDeviceUDID", device],
+                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
 try:
     subprocess.run(["xcrun", "simctl", "bootstatus", device, "-b"], check=True, timeout=180)
 except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
